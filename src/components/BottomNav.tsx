@@ -16,7 +16,10 @@ export function BottomNav() {
   if (pathname.startsWith("/login")) return null;
 
   return (
-    <nav className="sticky bottom-0 z-10 border-t border-[#E4E0D6] bg-[#FCFBF8]/95 backdrop-blur">
+    <nav
+      className="sticky bottom-0 z-10 border-t border-[#E4E0D6] bg-[#FCFBF8]/95 backdrop-blur"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+    >
       <div className="mx-auto flex max-w-[1100px] items-stretch justify-around">
         {TABS.map((tab) => {
           const active = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);

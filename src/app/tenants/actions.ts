@@ -50,6 +50,51 @@ export async function createTenant(formData: FormData) {
   redirect(`/tenants/${tenant.id}`);
 }
 
+export async function updateTenant(formData: FormData) {
+  const tenantId = formData.get("tenantId") as string;
+  const tenancyId = (formData.get("tenancyId") as string) || null;
+  const name = formData.get("name") as string;
+  const phone = (formData.get("phone") as string) || null;
+  const email = (formData.get("email") as string) || null;
+  const emergencyContact = (formData.get("emergencyContact") as string) || null;
+  const notes = (formData.get("notes") as string) || null;
+
+  const supabase = createAdminClient();
+
+  const { error: tenantError } = await supabase
+    .from("tenants")
+    .update({ name, phone, email, emergency_contact: emergencyContact, notes })
+    .eq("id", tenantId);
+  if (tenantError) throw tenantError;
+
+  // Only the active tenancy's terms are editable — an ended tenancy is
+  // historical record, not something to revise after the fact.
+  if (tenancyId) {
+    const monthlyRent = Number(formData.get("monthlyRent"));
+    const securityDeposit = Number(formData.get("securityDeposit") || 0);
+    const leaseStartDate = formData.get("leaseStartDate") as string;
+    const leaseEndDate = (formData.get("leaseEndDate") as string) || null;
+    const rentDueDay = Number(formData.get("rentDueDay") || 10);
+
+    const { error: tenancyError } = await supabase
+      .from("tenancies")
+      .update({
+        monthly_rent: monthlyRent,
+        security_deposit: securityDeposit,
+        lease_start_date: leaseStartDate,
+        lease_end_date: leaseEndDate,
+        rent_due_day: rentDueDay,
+      })
+      .eq("id", tenancyId);
+    if (tenancyError) throw tenancyError;
+  }
+
+  revalidatePath("/tenants");
+  revalidatePath("/");
+  revalidatePath(`/tenants/${tenantId}`);
+  redirect(`/tenants/${tenantId}`);
+}
+
 export async function endTenancy(formData: FormData) {
   const tenancyId = formData.get("tenancyId") as string;
   const tenantId = formData.get("tenantId") as string;

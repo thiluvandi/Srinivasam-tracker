@@ -49,23 +49,20 @@ export async function getLedgerDetail(ledgerId: string): Promise<LedgerDetail | 
   if (ledgerError) throw ledgerError;
   if (!ledger) return null;
 
-  const { data: tenancy } = await supabase
-    .from("tenancies")
-    .select("tenant_id, tenants(name)")
-    .eq("id", ledger.tenancy_id)
-    .single();
-
-  const { data: paymentRows } = await supabase
-    .from("payments")
-    .select("id, amount, transaction_date, payment_method, status, source")
-    .eq("monthly_ledger_id", ledgerId)
-    .order("created_at", { ascending: false });
-
-  const { data: adjustmentRows } = await supabase
-    .from("adjustments")
-    .select("id, amount, type, reason, created_at")
-    .eq("monthly_ledger_id", ledgerId)
-    .order("created_at", { ascending: false });
+  // None of these three depend on each other — only on the ledger row above.
+  const [{ data: tenancy }, { data: paymentRows }, { data: adjustmentRows }] = await Promise.all([
+    supabase.from("tenancies").select("tenant_id, tenants(name)").eq("id", ledger.tenancy_id).single(),
+    supabase
+      .from("payments")
+      .select("id, amount, transaction_date, payment_method, status, source")
+      .eq("monthly_ledger_id", ledgerId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("adjustments")
+      .select("id, amount, type, reason, created_at")
+      .eq("monthly_ledger_id", ledgerId)
+      .order("created_at", { ascending: false }),
+  ]);
 
   const paidTotal = (paymentRows ?? [])
     .filter((p) => p.status === "confirmed")

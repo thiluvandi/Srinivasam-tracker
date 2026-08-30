@@ -71,13 +71,22 @@ export async function getTenantProfileData(tenantId: string): Promise<TenantProf
   if (tenantError) throw tenantError;
   if (!tenant) return null;
 
-  const { data: tenancyRows, error: tenanciesError } = await supabase
-    .from("tenancies")
-    .select(
-      "id, unit_id, status, lease_start_date, lease_end_date, monthly_rent, security_deposit, rent_due_day, move_out_date, deposit_returned, deposit_deductions, final_notes, units(name)"
-    )
-    .eq("tenant_id", tenantId)
-    .order("created_at", { ascending: false });
+  // docRows only needs tenantId, same as tenancyRows — no reason to wait for
+  // one before starting the other.
+  const [{ data: tenancyRows, error: tenanciesError }, { data: docRows }] = await Promise.all([
+    supabase
+      .from("tenancies")
+      .select(
+        "id, unit_id, status, lease_start_date, lease_end_date, monthly_rent, security_deposit, rent_due_day, move_out_date, deposit_returned, deposit_deductions, final_notes, units(name)"
+      )
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("tenant_documents")
+      .select("id, category, file_name, storage_path, description, created_at")
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: false }),
+  ]);
   if (tenanciesError) throw tenanciesError;
 
   type TenancyRow = {
@@ -113,15 +122,37 @@ export async function getTenantProfileData(tenantId: string): Promise<TenantProf
   }));
 
   const unitIds = [...new Set(tenancies.map((t) => t.unitId))];
+  const tenancyIds = tenancies.map((t) => t.id);
 
-  const { data: prevRows } = unitIds.length
-    ? await supabase
-        .from("tenancies")
-        .select("unit_id, move_out_date, tenants(id, name), units(name)")
-        .in("unit_id", unitIds)
-        .neq("tenant_id", tenantId)
-        .order("move_out_date", { ascending: false })
-    : { data: [] };
+  const documents: TenantDocument[] = (docRows ?? []).map((d) => ({
+    id: d.id,
+    category: d.category,
+    fileName: d.file_name,
+    storagePath: d.storage_path,
+    description: d.description,
+    createdAt: d.created_at,
+  }));
+
+  // Neither of these depends on the other — both only need the ids derived
+  // from tenancies above.
+  const [{ data: prevRows }, { data: ledgerRows }] = await Promise.all([
+    unitIds.length
+      ? supabase
+          .from("tenancies")
+          .select("unit_id, move_out_date, tenants(id, name), units(name)")
+          .in("unit_id", unitIds)
+          .neq("tenant_id", tenantId)
+          .order("move_out_date", { ascending: false })
+      : Promise.resolve({ data: [] }),
+    tenancyIds.length
+      ? supabase
+          .from("monthly_ledgers")
+          .select("id, year, month, total_due, rent_due_day")
+          .in("tenancy_id", tenancyIds)
+          .order("year", { ascending: false })
+          .order("month", { ascending: false })
+      : Promise.resolve({ data: [] }),
+  ]);
 
   type PrevRow = {
     unit_id: string;
@@ -134,31 +165,6 @@ export async function getTenantProfileData(tenantId: string): Promise<TenantProf
     const u = Array.isArray(r.units) ? r.units[0] : r.units;
     return { tenantId: t?.id, tenantName: t?.name, unitName: u?.name, moveOutDate: r.move_out_date };
   });
-
-  const { data: docRows } = await supabase
-    .from("tenant_documents")
-    .select("id, category, file_name, storage_path, description, created_at")
-    .eq("tenant_id", tenantId)
-    .order("created_at", { ascending: false });
-
-  const documents: TenantDocument[] = (docRows ?? []).map((d) => ({
-    id: d.id,
-    category: d.category,
-    fileName: d.file_name,
-    storagePath: d.storage_path,
-    description: d.description,
-    createdAt: d.created_at,
-  }));
-
-  const tenancyIds = tenancies.map((t) => t.id);
-  const { data: ledgerRows } = tenancyIds.length
-    ? await supabase
-        .from("monthly_ledgers")
-        .select("id, year, month, total_due, rent_due_day")
-        .in("tenancy_id", tenancyIds)
-        .order("year", { ascending: false })
-        .order("month", { ascending: false })
-    : { data: [] };
 
   const ledgerIds = (ledgerRows ?? []).map((l) => l.id);
   const [{ data: paymentRows }, { data: waiverRows }] = await Promise.all([

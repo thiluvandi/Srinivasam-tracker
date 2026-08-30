@@ -33,27 +33,51 @@ export async function getHomeDashboardData(year: number, month: number): Promise
   const supabase = createAdminClient();
   const propertyId = await getPropertyId();
 
-  await supabase.rpc("generate_monthly_ledgers_for_period", {
-    p_property_id: propertyId,
-    p_year: year,
-    p_month: month,
-  });
-
   const periodStart = `${year}-${String(month).padStart(2, "0")}-01`;
   const periodEnd = new Date(year, month, 0).toISOString().slice(0, 10);
 
-  const { data: units, error: unitsError } = await supabase
-    .from("units")
-    .select("id, name, display_order")
-    .eq("property_id", propertyId)
-    .order("display_order");
+  // Everything in this batch is independent — none of these queries depend
+  // on each other's results, so there's no reason to await them one at a
+  // time. The RPC must finish before the ledgers query below runs, but it
+  // doesn't need to block units/tenancies/the attention-banner counts.
+  const [
+    ,
+    { data: units, error: unitsError },
+    { data: tenancies, error: tenanciesError },
+    { count: needsReviewCount },
+    { count: unmatchedCount },
+    { data: waterBill },
+  ] = await Promise.all([
+    supabase.rpc("generate_monthly_ledgers_for_period", {
+      p_property_id: propertyId,
+      p_year: year,
+      p_month: month,
+    }),
+    supabase
+      .from("units")
+      .select("id, name, display_order")
+      .eq("property_id", propertyId)
+      .order("display_order"),
+    supabase
+      .from("tenancies")
+      .select("id, unit_id, tenant_id, tenants(name)")
+      .lte("lease_start_date", periodEnd)
+      .or(`move_out_date.is.null,move_out_date.gte.${periodStart}`),
+    supabase
+      .from("payments")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending_review")
+      .not("monthly_ledger_id", "is", null),
+    supabase.from("payments").select("id", { count: "exact", head: true }).eq("status", "unmatched"),
+    supabase
+      .from("water_bills")
+      .select("id")
+      .eq("property_id", propertyId)
+      .eq("year", year)
+      .eq("month", month)
+      .maybeSingle(),
+  ]);
   if (unitsError) throw unitsError;
-
-  const { data: tenancies, error: tenanciesError } = await supabase
-    .from("tenancies")
-    .select("id, unit_id, tenant_id, tenants(name)")
-    .lte("lease_start_date", periodEnd)
-    .or(`move_out_date.is.null,move_out_date.gte.${periodStart}`);
   if (tenanciesError) throw tenanciesError;
 
   type TenancyRow = { id: string; unit_id: string; tenant_id: string; tenants: { name: string } | { name: string }[] };
@@ -156,27 +180,9 @@ export async function getHomeDashboardData(year: number, month: number): Promise
   const attention: string[] = [];
   const overdueCount = occupiedRows.filter((r) => r.status === "overdue").length;
   if (overdueCount > 0) attention.push(`${overdueCount} tenant${overdueCount === 1 ? "" : "s"} overdue`);
-
-  const { count: needsReviewCount } = await supabase
-    .from("payments")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "pending_review")
-    .not("monthly_ledger_id", "is", null);
   if (needsReviewCount) attention.push(`${needsReviewCount} payment${needsReviewCount === 1 ? "" : "s"} needs verification`);
-
-  const { count: unmatchedCount } = await supabase
-    .from("payments")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "unmatched");
   if (unmatchedCount) attention.push(`${unmatchedCount} unmatched payment${unmatchedCount === 1 ? "" : "s"}`);
 
-  const { data: waterBill } = await supabase
-    .from("water_bills")
-    .select("id")
-    .eq("property_id", propertyId)
-    .eq("year", year)
-    .eq("month", month)
-    .maybeSingle();
   const monthName = new Date(year, month - 1, 1).toLocaleDateString("en-US", { month: "long" });
   if (!waterBill && occupiedRows.length > 0) attention.push(`Water bill not entered for ${monthName}`);
 

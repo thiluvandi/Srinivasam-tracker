@@ -15,17 +15,11 @@ export async function getTenantsListData(): Promise<TenantsListRow[]> {
   const supabase = createAdminClient();
   const propertyId = await getPropertyId();
 
-  const { data: units, error: unitsError } = await supabase
-    .from("units")
-    .select("id, name, display_order")
-    .eq("property_id", propertyId)
-    .order("display_order");
+  const [{ data: units, error: unitsError }, { data: tenancies, error: tenanciesError }] = await Promise.all([
+    supabase.from("units").select("id, name, display_order").eq("property_id", propertyId).order("display_order"),
+    supabase.from("tenancies").select("id, unit_id, tenant_id, monthly_rent, tenants(name)").eq("status", "active"),
+  ]);
   if (unitsError) throw unitsError;
-
-  const { data: tenancies, error: tenanciesError } = await supabase
-    .from("tenancies")
-    .select("id, unit_id, tenant_id, monthly_rent, tenants(name)")
-    .eq("status", "active");
   if (tenanciesError) throw tenanciesError;
 
   type Row = { id: string; unit_id: string; tenant_id: string; monthly_rent: number; tenants: { name: string } | { name: string }[] };

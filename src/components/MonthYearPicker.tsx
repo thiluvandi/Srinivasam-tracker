@@ -11,10 +11,13 @@ export function MonthYearPicker({
   year,
   month,
   basePath = "/",
+  extraQuery = {},
 }: {
   year: number;
   month: number;
   basePath?: string;
+  /** Extra query params to preserve alongside year/month, e.g. { fy: "2026" }. */
+  extraQuery?: Record<string, string>;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -41,7 +44,8 @@ export function MonthYearPicker({
 
   function go() {
     setOpen(false);
-    router.push(`${basePath}?year=${pendingYear}&month=${pendingMonth}`);
+    const params = new URLSearchParams({ ...extraQuery, year: String(pendingYear), month: String(pendingMonth) });
+    router.push(`${basePath}?${params.toString()}`);
   }
 
   const now = new Date();

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getMonthlySummary, getFinancialYearSummary } from "@/lib/data/reports";
 import { currency } from "@/lib/currency";
 import { MONTH_NAMES } from "@/lib/status";
+import { MonthYearPicker } from "@/components/MonthYearPicker";
 
 export const dynamic = "force-dynamic";
 
@@ -44,16 +45,22 @@ export default async function ReportsPage({
     <div className="px-5 pb-8 pt-8">
       <p className="text-xl font-semibold tracking-tight text-[#2A2724]">Reports</p>
 
-      <div className="mt-6 flex items-center justify-center gap-4">
-        <Link href={monthHref(prevMonth.year, prevMonth.month)} className="px-2 text-lg text-[#A39D8E]">
-          ‹
-        </Link>
-        <p className="text-base font-medium text-[#2A2724]">
-          {MONTH_NAMES[month - 1]} {year}
-        </p>
-        <Link href={monthHref(nextMonth.year, nextMonth.month)} className="px-2 text-lg text-[#A39D8E]">
-          ›
-        </Link>
+      <div className="mt-6 grid grid-cols-[1fr_auto_1fr] items-center">
+        <span />
+        <div className="flex items-center justify-center gap-4">
+          <Link href={monthHref(prevMonth.year, prevMonth.month)} className="px-2 text-lg text-[#A39D8E]">
+            ‹
+          </Link>
+          <p className="text-base font-medium text-[#2A2724]">
+            {MONTH_NAMES[month - 1]} {year}
+          </p>
+          <Link href={monthHref(nextMonth.year, nextMonth.month)} className="px-2 text-lg text-[#A39D8E]">
+            ›
+          </Link>
+        </div>
+        <div className="flex justify-end pl-2">
+          <MonthYearPicker year={year} month={month} basePath="/reports" extraQuery={{ fy: String(fyStartYear) }} />
+        </div>
       </div>
 
       <div className="mt-4 rounded-2xl border border-[#E4E0D6] bg-white p-4 text-center">

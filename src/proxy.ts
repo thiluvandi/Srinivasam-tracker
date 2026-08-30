@@ -31,5 +31,11 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.json|icon.png|apple-icon.png|icons/).*)"],
+  // Exclude Next.js internals and any static asset by extension, rather than
+  // an ever-growing allowlist of individual public/ filenames — a new
+  // favicon or logo file shouldn't need a proxy config change to be servable
+  // while logged out.
+  matcher: [
+    "/((?!_next/static|_next/image|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|json|txt|woff2?)$).*)",
+  ],
 };

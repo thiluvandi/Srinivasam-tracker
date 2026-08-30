@@ -18,6 +18,11 @@ export type UnitRow = {
   lastPaymentDate?: string | null;
 };
 
+export type AttentionItem = {
+  message: string;
+  href?: string;
+};
+
 export type HomeDashboardData = {
   year: number;
   month: number;
@@ -26,7 +31,7 @@ export type HomeDashboardData = {
   outstanding: number;
   settledCount: number;
   occupiedCount: number;
-  attention: string[];
+  attention: AttentionItem[];
 };
 
 export async function getHomeDashboardData(year: number, month: number): Promise<HomeDashboardData> {
@@ -177,14 +182,18 @@ export async function getHomeDashboardData(year: number, month: number): Promise
   const outstanding = occupiedRows.reduce((sum, r) => sum + Math.max(r.balance ?? 0, 0), 0);
   const settledCount = occupiedRows.filter((r) => r.status === "paid" || r.status === "waived").length;
 
-  const attention: string[] = [];
+  const attention: AttentionItem[] = [];
   const overdueCount = occupiedRows.filter((r) => r.status === "overdue").length;
-  if (overdueCount > 0) attention.push(`${overdueCount} tenant${overdueCount === 1 ? "" : "s"} overdue`);
-  if (needsReviewCount) attention.push(`${needsReviewCount} payment${needsReviewCount === 1 ? "" : "s"} needs verification`);
-  if (unmatchedCount) attention.push(`${unmatchedCount} unmatched payment${unmatchedCount === 1 ? "" : "s"}`);
+  if (overdueCount > 0) attention.push({ message: `${overdueCount} tenant${overdueCount === 1 ? "" : "s"} overdue` });
+  if (needsReviewCount) attention.push({ message: `${needsReviewCount} payment${needsReviewCount === 1 ? "" : "s"} needs verification` });
+  if (unmatchedCount) attention.push({ message: `${unmatchedCount} unmatched payment${unmatchedCount === 1 ? "" : "s"}` });
 
-  const monthName = new Date(year, month - 1, 1).toLocaleDateString("en-US", { month: "long" });
-  if (!waterBill && occupiedRows.length > 0) attention.push(`Water bill not entered for ${monthName}`);
+  // Disappears the moment a water_bills row exists for this exact
+  // year/month — entering it for August never re-shows this for August,
+  // and it only reappears once a new month with no bill yet comes around.
+  if (!waterBill && occupiedRows.length > 0) {
+    attention.push({ message: "Enter water bill amount", href: `/water-bill?year=${year}&month=${month}` });
+  }
 
   return {
     year,

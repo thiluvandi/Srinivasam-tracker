@@ -80,43 +80,48 @@ export async function getFinancialYearSummary(fyStartYear: number) {
   const { data: units } = await supabase.from("units").select("id").eq("property_id", propertyId);
   const unitIds = (units ?? []).map((u) => u.id);
 
-  const periods: { year: number; month: number }[] = [];
+  const periods = new Set<string>();
   for (let i = 0; i < 12; i++) {
     const m = 4 + i;
-    if (m <= 12) periods.push({ year: fyStartYear, month: m });
-    else periods.push({ year: fyStartYear + 1, month: m - 12 });
+    const year = m <= 12 ? fyStartYear : fyStartYear + 1;
+    const month = m <= 12 ? m : m - 12;
+    periods.add(`${year}-${month}`);
+  }
+
+  // The FY spans at most two calendar years, so one query covering both
+  // (filtered down to the 12 target months in JS) replaces what was 12
+  // separate per-month round-trips.
+  const { data: ledgers } = unitIds.length
+    ? await supabase
+        .from("monthly_ledgers")
+        .select("id, year, month, base_rent, water_charge, total_due")
+        .in("unit_id", unitIds)
+        .in("year", [fyStartYear, fyStartYear + 1])
+    : { data: [] };
+
+  const fyLedgers = (ledgers ?? []).filter((l) => periods.has(`${l.year}-${l.month}`));
+  const ledgerIds = fyLedgers.map((l) => l.id);
+
+  const { data: payments } = ledgerIds.length
+    ? await supabase
+        .from("payments")
+        .select("monthly_ledger_id, amount")
+        .in("monthly_ledger_id", ledgerIds)
+        .eq("status", "confirmed")
+    : { data: [] };
+
+  const paidByLedger = new Map<string, number>();
+  for (const pay of payments ?? []) {
+    paidByLedger.set(pay.monthly_ledger_id, (paidByLedger.get(pay.monthly_ledger_id) ?? 0) + Number(pay.amount));
   }
 
   let totalRent = 0, totalCollected = 0, totalOutstanding = 0, totalWater = 0;
-
-  for (const p of periods) {
-    const { data: ledgers } = unitIds.length
-      ? await supabase
-          .from("monthly_ledgers")
-          .select("id, base_rent, water_charge, adjustments_total, total_due, rent_due_day")
-          .in("unit_id", unitIds)
-          .eq("year", p.year)
-          .eq("month", p.month)
-      : { data: [] };
-    if (!ledgers || ledgers.length === 0) continue;
-
-    const ledgerIds = ledgers.map((l) => l.id);
-    const { data: payments } = await supabase
-      .from("payments")
-      .select("monthly_ledger_id, amount")
-      .in("monthly_ledger_id", ledgerIds)
-      .eq("status", "confirmed");
-
-    const paidByLedger = new Map<string, number>();
-    for (const pay of payments ?? []) paidByLedger.set(pay.monthly_ledger_id, (paidByLedger.get(pay.monthly_ledger_id) ?? 0) + Number(pay.amount));
-
-    for (const l of ledgers) {
-      totalRent += Number(l.base_rent);
-      totalWater += Number(l.water_charge);
-      const paidTotal = paidByLedger.get(l.id) ?? 0;
-      totalCollected += paidTotal;
-      totalOutstanding += Math.max(Number(l.total_due) - paidTotal, 0);
-    }
+  for (const l of fyLedgers) {
+    totalRent += Number(l.base_rent);
+    totalWater += Number(l.water_charge);
+    const paidTotal = paidByLedger.get(l.id) ?? 0;
+    totalCollected += paidTotal;
+    totalOutstanding += Math.max(Number(l.total_due) - paidTotal, 0);
   }
 
   return { totalRent, totalCollected, totalOutstanding, totalWater };

@@ -51,14 +51,24 @@ export default async function HomePage({
 
       {data.attention.length > 0 && (
         <div className="mt-4 space-y-1.5">
-          {data.attention.map((msg) => (
-            <p
-              key={msg}
-              className="rounded-lg bg-[#FAF1DD] px-3 py-2 text-center text-sm text-[#8A6B27]"
-            >
-              {msg}
-            </p>
-          ))}
+          {data.attention.map((item) =>
+            item.href ? (
+              <Link
+                key={item.message}
+                href={item.href}
+                className="block rounded-lg bg-[#FAF1DD] px-3 py-2 text-center text-sm font-medium text-[#8A6B27] underline"
+              >
+                {item.message}
+              </Link>
+            ) : (
+              <p
+                key={item.message}
+                className="rounded-lg bg-[#FAF1DD] px-3 py-2 text-center text-sm text-[#8A6B27]"
+              >
+                {item.message}
+              </p>
+            )
+          )}
         </div>
       )}
 

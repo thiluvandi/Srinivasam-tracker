@@ -76,16 +76,14 @@ export async function updateTenant(formData: FormData) {
     const leaseEndDate = (formData.get("leaseEndDate") as string) || null;
     const rentDueDay = Number(formData.get("rentDueDay") || 10);
 
-    const { error: tenancyError } = await supabase
-      .from("tenancies")
-      .update({
-        monthly_rent: monthlyRent,
-        security_deposit: securityDeposit,
-        lease_start_date: leaseStartDate,
-        lease_end_date: leaseEndDate,
-        rent_due_day: rentDueDay,
-      })
-      .eq("id", tenancyId);
+    const { error: tenancyError } = await supabase.rpc("update_tenancy_terms", {
+      p_tenancy_id: tenancyId,
+      p_monthly_rent: monthlyRent,
+      p_security_deposit: securityDeposit,
+      p_lease_start_date: leaseStartDate,
+      p_lease_end_date: leaseEndDate,
+      p_rent_due_day: rentDueDay,
+    });
     if (tenancyError) throw tenancyError;
   }
 

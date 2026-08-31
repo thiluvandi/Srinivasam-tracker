@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { uploadAndExtract, confirmUploadedPayment, cancelUpload, type UploadResult } from "./uploadActions";
+import { uploadAndExtract, createManualEntry, confirmUploadedPayment, cancelUpload, type UploadResult } from "./uploadActions";
 
 const inputClass =
   "mt-1 w-full rounded-xl border border-[#E4E0D6] bg-white px-3 py-2.5 text-sm text-[#2A2724] focus:border-[#B9C4B0] focus:outline-none";
@@ -40,6 +40,18 @@ export function UploadFlow({
     }
   }
 
+  async function handleManualEntry() {
+    setError(null);
+    try {
+      const r = await createManualEntry(ledgerId);
+      setResult(r);
+      setManualEntry(true);
+      setStage("verify");
+    } catch {
+      setError("Something went wrong starting a manual entry. Try again.");
+    }
+  }
+
   if (stage === "upload") {
     return (
       <div className="mt-6">
@@ -56,6 +68,15 @@ export function UploadFlow({
             }}
           />
         </label>
+
+        <button
+          type="button"
+          onClick={handleManualEntry}
+          className="mt-3 w-full rounded-xl border border-[#E4E0D6] bg-white px-4 py-3 text-sm font-medium text-[#2A2724]"
+        >
+          Enter payment details myself
+        </button>
+
         {error && <p className="mt-3 text-center text-sm text-[#B4694A]">{error}</p>}
       </div>
     );

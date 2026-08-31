@@ -103,6 +103,45 @@ export async function uploadAndExtract(ledgerId: string, formData: FormData): Pr
   };
 }
 
+/** For "enter payment details myself" — no screenshot, no OCR, straight to the confirm form. */
+export async function createManualEntry(ledgerId: string): Promise<UploadResult> {
+  const supabase = createAdminClient();
+
+  const { data: ledger, error: ledgerError } = await supabase
+    .from("monthly_ledgers")
+    .select("id, tenancy_id, tenancies(tenant_id)")
+    .eq("id", ledgerId)
+    .single();
+  if (ledgerError) throw ledgerError;
+  const tenancy = Array.isArray(ledger.tenancies) ? ledger.tenancies[0] : ledger.tenancies;
+
+  const { data: payment, error: insertError } = await supabase
+    .from("payments")
+    .insert({
+      monthly_ledger_id: ledgerId,
+      tenant_id: tenancy?.tenant_id,
+      amount: 0,
+      source: "manual_entry",
+      status: "pending_review",
+    })
+    .select("id")
+    .single();
+  if (insertError) throw insertError;
+
+  return {
+    paymentId: payment.id,
+    amount: null,
+    transactionDate: null,
+    transactionTime: null,
+    referenceNumber: null,
+    payerName: null,
+    paymentApp: null,
+    paymentMethod: null,
+    notes: null,
+    confidence: 1,
+  };
+}
+
 export async function confirmUploadedPayment(formData: FormData) {
   const paymentId = formData.get("paymentId") as string;
   const ledgerId = formData.get("ledgerId") as string;

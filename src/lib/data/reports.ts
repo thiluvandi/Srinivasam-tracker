@@ -17,38 +17,51 @@ export async function getMonthlySummary(year: number, month: number): Promise<Mo
   const supabase = createAdminClient();
   const propertyId = await getPropertyId();
 
-  await supabase.rpc("generate_monthly_ledgers_for_period", { p_property_id: propertyId, p_year: year, p_month: month });
-
-  const { data: units } = await supabase.from("units").select("id").eq("property_id", propertyId);
-  const unitIds = (units ?? []).map((u) => u.id);
-
-  const { data: ledgers } = unitIds.length
-    ? await supabase
-        .from("monthly_ledgers")
-        .select("id, base_rent, water_charge, adjustments_total, total_due, rent_due_day")
-        .in("unit_id", unitIds)
-        .eq("year", year)
-        .eq("month", month)
-    : { data: [] };
-
-  const ledgerIds = (ledgers ?? []).map((l) => l.id);
-  const [{ data: payments }, { data: waivers }] = await Promise.all([
-    ledgerIds.length
-      ? supabase.from("payments").select("monthly_ledger_id, amount").in("monthly_ledger_id", ledgerIds).eq("status", "confirmed")
-      : Promise.resolve({ data: [] }),
-    ledgerIds.length
-      ? supabase.from("adjustments").select("monthly_ledger_id").in("monthly_ledger_id", ledgerIds).eq("type", "waiver")
-      : Promise.resolve({ data: [] }),
+  // The units count (for the vacant tally) is independent of the ledger
+  // generation, so it rides along with the RPC instead of queuing behind it.
+  const [, { data: units }] = await Promise.all([
+    supabase.rpc("generate_monthly_ledgers_for_period", { p_property_id: propertyId, p_year: year, p_month: month }),
+    supabase.from("units").select("id").eq("property_id", propertyId),
   ]);
 
+  // Ledgers + their payments + their adjustments in one round-trip, instead
+  // of fetching ledgers, then their ids, then two id-keyed queries.
+  type LedgerRow = {
+    id: string;
+    base_rent: number;
+    water_charge: number;
+    adjustments_total: number;
+    total_due: number;
+    rent_due_day: number;
+    payments: { amount: number; status: string }[];
+    adjustments: { type: string }[];
+  };
+
+  const { data: ledgerRows } = await supabase
+    .from("monthly_ledgers")
+    .select(
+      "id, base_rent, water_charge, adjustments_total, total_due, rent_due_day, units!inner(property_id), payments(amount, status), adjustments(type)"
+    )
+    .eq("year", year)
+    .eq("month", month)
+    .eq("units.property_id", propertyId);
+
+  const ledgers = (ledgerRows ?? []) as unknown as LedgerRow[];
+
   const paidByLedger = new Map<string, number>();
-  for (const p of payments ?? []) paidByLedger.set(p.monthly_ledger_id, (paidByLedger.get(p.monthly_ledger_id) ?? 0) + Number(p.amount));
-  const waiverIds = new Set((waivers ?? []).map((w) => w.monthly_ledger_id));
+  const waiverIds = new Set<string>();
+  for (const l of ledgers) {
+    paidByLedger.set(
+      l.id,
+      (l.payments ?? []).reduce((sum, p) => (p.status === "confirmed" ? sum + Number(p.amount) : sum), 0)
+    );
+    if ((l.adjustments ?? []).some((a) => a.type === "waiver")) waiverIds.add(l.id);
+  }
 
   let expected = 0, water = 0, adjustments = 0, totalDue = 0, collected = 0, outstanding = 0;
-  const counts = { paid: 0, partial: 0, overdue: 0, pending: 0, waived: 0, vacant: (units?.length ?? 0) - (ledgers?.length ?? 0) };
+  const counts = { paid: 0, partial: 0, overdue: 0, pending: 0, waived: 0, vacant: (units?.length ?? 0) - ledgers.length };
 
-  for (const l of ledgers ?? []) {
+  for (const l of ledgers) {
     expected += Number(l.base_rent);
     water += Number(l.water_charge);
     adjustments += Number(l.adjustments_total);
@@ -77,8 +90,6 @@ export function financialYearRange(fyStartYear: number): { start: [number, numbe
 export async function getFinancialYearSummary(fyStartYear: number) {
   const supabase = createAdminClient();
   const propertyId = await getPropertyId();
-  const { data: units } = await supabase.from("units").select("id").eq("property_id", propertyId);
-  const unitIds = (units ?? []).map((u) => u.id);
 
   const periods = new Set<string>();
   for (let i = 0; i < 12; i++) {
@@ -90,36 +101,36 @@ export async function getFinancialYearSummary(fyStartYear: number) {
 
   // The FY spans at most two calendar years, so one query covering both
   // (filtered down to the 12 target months in JS) replaces what was 12
-  // separate per-month round-trips.
-  const { data: ledgers } = unitIds.length
-    ? await supabase
-        .from("monthly_ledgers")
-        .select("id, year, month, base_rent, water_charge, total_due")
-        .in("unit_id", unitIds)
-        .in("year", [fyStartYear, fyStartYear + 1])
-    : { data: [] };
+  // separate per-month round-trips — and embedding payments here removes
+  // the follow-up query that used to wait on the ledger ids.
+  type FyLedgerRow = {
+    id: string;
+    year: number;
+    month: number;
+    base_rent: number;
+    water_charge: number;
+    total_due: number;
+    payments: { amount: number; status: string }[];
+  };
 
-  const fyLedgers = (ledgers ?? []).filter((l) => periods.has(`${l.year}-${l.month}`));
-  const ledgerIds = fyLedgers.map((l) => l.id);
+  const { data: ledgerRows } = await supabase
+    .from("monthly_ledgers")
+    .select("id, year, month, base_rent, water_charge, total_due, units!inner(property_id), payments(amount, status)")
+    .in("year", [fyStartYear, fyStartYear + 1])
+    .eq("units.property_id", propertyId);
 
-  const { data: payments } = ledgerIds.length
-    ? await supabase
-        .from("payments")
-        .select("monthly_ledger_id, amount")
-        .in("monthly_ledger_id", ledgerIds)
-        .eq("status", "confirmed")
-    : { data: [] };
-
-  const paidByLedger = new Map<string, number>();
-  for (const pay of payments ?? []) {
-    paidByLedger.set(pay.monthly_ledger_id, (paidByLedger.get(pay.monthly_ledger_id) ?? 0) + Number(pay.amount));
-  }
+  const fyLedgers = ((ledgerRows ?? []) as unknown as FyLedgerRow[]).filter((l) =>
+    periods.has(`${l.year}-${l.month}`)
+  );
 
   let totalRent = 0, totalCollected = 0, totalOutstanding = 0, totalWater = 0;
   for (const l of fyLedgers) {
     totalRent += Number(l.base_rent);
     totalWater += Number(l.water_charge);
-    const paidTotal = paidByLedger.get(l.id) ?? 0;
+    const paidTotal = (l.payments ?? []).reduce(
+      (sum, p) => (p.status === "confirmed" ? sum + Number(p.amount) : sum),
+      0
+    );
     totalCollected += paidTotal;
     totalOutstanding += Math.max(Number(l.total_due) - paidTotal, 0);
   }

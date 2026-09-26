@@ -91,46 +91,52 @@ export async function getHomeDashboardData(year: number, month: number): Promise
     tenancyByUnit.set(t.unit_id, t);
   }
 
-  const tenancyIds = [...tenancyByUnit.values()].map((t) => t.id);
+  // Ledgers, their payments and their adjustments come back in a single
+  // round-trip via embedded resources, rather than fetching ledgers, then
+  // their ids, then two more queries keyed on those ids. This query is
+  // filtered by property through the units join, so it doesn't depend on
+  // the tenancy ids above either — its only real dependency is the RPC
+  // above, which creates any missing ledger rows for the period.
+  type LedgerRow = {
+    id: string;
+    tenancy_id: string;
+    base_rent: number;
+    water_charge: number;
+    adjustments_total: number;
+    total_due: number;
+    rent_due_day: number;
+    payments: { amount: number; transaction_date: string | null; status: string }[];
+    adjustments: { type: string }[];
+  };
 
-  const { data: ledgers, error: ledgersError } = tenancyIds.length
-    ? await supabase
-        .from("monthly_ledgers")
-        .select("id, tenancy_id, base_rent, water_charge, adjustments_total, total_due, rent_due_day")
-        .in("tenancy_id", tenancyIds)
-        .eq("year", year)
-        .eq("month", month)
-    : { data: [], error: null };
+  const { data: ledgerRows, error: ledgersError } = await supabase
+    .from("monthly_ledgers")
+    .select(
+      "id, tenancy_id, base_rent, water_charge, adjustments_total, total_due, rent_due_day, units!inner(property_id), payments(amount, transaction_date, status), adjustments(type)"
+    )
+    .eq("year", year)
+    .eq("month", month)
+    .eq("units.property_id", propertyId);
   if (ledgersError) throw ledgersError;
 
-  const ledgerByTenancy = new Map((ledgers ?? []).map((l) => [l.tenancy_id, l]));
-  const ledgerIds = (ledgers ?? []).map((l) => l.id);
-
-  const [{ data: payments, error: paymentsError }, { data: waivers, error: waiversError }] = await Promise.all([
-    ledgerIds.length
-      ? supabase
-          .from("payments")
-          .select("monthly_ledger_id, amount, transaction_date")
-          .in("monthly_ledger_id", ledgerIds)
-          .eq("status", "confirmed")
-      : Promise.resolve({ data: [], error: null }),
-    ledgerIds.length
-      ? supabase.from("adjustments").select("monthly_ledger_id").in("monthly_ledger_id", ledgerIds).eq("type", "waiver")
-      : Promise.resolve({ data: [], error: null }),
-  ]);
-  if (paymentsError) throw paymentsError;
-  if (waiversError) throw waiversError;
+  const ledgers = (ledgerRows ?? []) as unknown as LedgerRow[];
+  const ledgerByTenancy = new Map(ledgers.map((l) => [l.tenancy_id, l]));
 
   const paidByLedger = new Map<string, number>();
   const lastPaymentByLedger = new Map<string, string>();
-  for (const p of payments ?? []) {
-    paidByLedger.set(p.monthly_ledger_id, (paidByLedger.get(p.monthly_ledger_id) ?? 0) + Number(p.amount));
-    if (p.transaction_date) {
-      const current = lastPaymentByLedger.get(p.monthly_ledger_id);
-      if (!current || p.transaction_date > current) lastPaymentByLedger.set(p.monthly_ledger_id, p.transaction_date);
+  const waiverLedgerIds = new Set<string>();
+  for (const l of ledgers) {
+    let paid = 0;
+    let last: string | null = null;
+    for (const p of l.payments ?? []) {
+      if (p.status !== "confirmed") continue;
+      paid += Number(p.amount);
+      if (p.transaction_date && (!last || p.transaction_date > last)) last = p.transaction_date;
     }
+    paidByLedger.set(l.id, paid);
+    if (last) lastPaymentByLedger.set(l.id, last);
+    if ((l.adjustments ?? []).some((a) => a.type === "waiver")) waiverLedgerIds.add(l.id);
   }
-  const waiverLedgerIds = new Set((waivers ?? []).map((w) => w.monthly_ledger_id));
 
   const rows: UnitRow[] = (units ?? []).map((u) => {
     const tenancy = tenancyByUnit.get(u.id);
